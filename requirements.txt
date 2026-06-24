@@ -1,0 +1,7 @@
+requests
+httpx
+Flask
+user_agent
+cloudscraper
+beautifulsoup4
+fake-useragent
